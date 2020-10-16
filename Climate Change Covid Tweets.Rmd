@@ -1,0 +1,214 @@
+---
+title: "corona_climate_analysis"
+output: html_document
+---
+
+
+```{r}
+install.packages("quanteda")
+install.packages("tm")
+install.packages("topicmodels")
+install.packages("ldatuning")
+
+library(googledrive)
+library(rtweet)
+library(stringr)
+library(dplyr)
+library(quanteda)
+
+library(NLP)
+library(tm)
+library(RColorBrewer)
+library(wordcloud)
+library(topicmodels)
+library(SnowballC)
+library(ldatuning)
+library(stm)
+
+
+```
+
+
+```{r}
+
+# Started Using Rtweets.
+
+ds <- Map(
+  "search_tweets",
+  c("corona AND climate", "covid-19 AND climate", "coronavirus AND climate", "covid-19 AND Climate", "COVID-19 AND Climate", "COVID19 AND climate","covid19 AND climate", "CORONVAVIRUS AND climate", "Coronavirus AND climate" 
+),
+  n = 18000)
+
+
+ds <- do.call(rbind.data.frame(ds))
+
+
+```
+
+
+
+```{r}
+
+# Clearning Tweets
+
+tweets <- iconv(ds$text, to = "ASCII", sub = " ")  # Convert to basic ASCII text to avoid silly characters
+tweets <- tolower(tweets)  # Make everything consistently lower case
+tweets <- gsub("rt", " ", tweets)  # Remove the "RT" (retweet) so duplicates are duplicates
+tweets <- gsub("@\\w+", " ", tweets)  # Remove user names (all proper names if you're wise!)
+tweets <- gsub("http.+ |http.+$", " ", tweets)  # Remove links
+tweets <- gsub("[[:punct:]]", " ", tweets)  # Remove punctuation
+tweets <- gsub("[ |\t]{2,}", " ", tweets)  # Remove tabs
+tweets <- gsub("amp", " ", tweets)  # "&" is "&amp" in HTML, so after punctuation removed ...
+tweets <- gsub("^ ", "", tweets)  # Leading blanks
+tweets <- gsub(" $", "", tweets)  # Lagging blanks
+tweets <- gsub(" +", " ", tweets) # General spaces (should just do all whitespaces no?)
+tweets <- unique(tweets)  # Now get rid of duplicates!
+
+
+
+# Convert to tm corpus and use its API for some additional fun
+corpus <- Corpus(VectorSource(tweets))  # Create corpus object
+
+# Remove English stop words. 
+corpus <- tm_map(corpus, removeWords, stopwords("en"))  
+
+# Remove numbers. 
+corpus <- tm_map(corpus, removeNumbers)
+
+# Stem the words
+corpus <- tm_map(corpus, stemDocument)
+
+# Remove the stems associated with our search terms!
+corpus <- tm_map(corpus, removeWords, c("climate", "corona", "covid"))
+
+
+
+# Data Visualization with Word Cloud
+pal <- brewer.pal(8, "Dark2")
+wordcloud(corpus, min.freq=2, max.words = 150, random.order = TRUE, col = pal)
+
+
+
+#  Topic Modeling
+
+# Get the lengths and make sure we only create a DTM for tweets with
+# some actual content
+doc.lengths <- rowSums(as.matrix(DocumentTermMatrix(corpus)))
+dtm <- DocumentTermMatrix(corpus[doc.lengths > 0])
+# model <- LDA(dtm, 10)  # test a simple model
+
+
+
+# Now for some topics
+SEED = sample(1:1000000, 1)  # Pick a random seed for replication
+k = 4  # Let's start with 4 topics
+
+# This might take a minute!
+models <- list(
+    CTM       = CTM(dtm, k = k, control = list(seed = SEED, var = list(tol = 10^-4), em = list(tol = 10^-3))),
+    VEM       = LDA(dtm, k = k, control = list(seed = SEED)),
+    VEM_Fixed = LDA(dtm, k = k, control = list(estimate.alpha = FALSE, seed = SEED)),
+    Gibbs     = LDA(dtm, k = k, method = "Gibbs", control = list(seed = SEED, burnin = 1000,
+                                                                 thin = 100,    iter = 1000))
+)
+
+
+
+
+# Top 10 terms of each topic for each model
+model_topics <- lapply(models, terms, 10)
+
+# matrix of tweet assignments to predominate topic on that tweet
+# for each of the models,
+assignments <- sapply(models, topics) 
+
+
+
+model_topics_df <- do.call(rbind.data.frame, model_topics )
+
+
+
+
+# LDA MODEL
+
+lda_model <- list()
+terms_model <- list()
+for (i in 6:10){
+lda_model[[i]] <- LDA(dtm, i)  # Go ahead and test a simple model if you want
+terms_model[[i]] <- terms(lda_model[[i]], 20)
+write.csv(as.data.frame(terms_model[[i]]), file =paste0("model ", i, " topics", ".csv") )
+}
+
+
+```
+
+
+```{r}
+result <- FindTopicsNumber(
+  dtm,
+  topics = seq(from = 2, to = 15, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  #mc.cores = 2L,
+  verbose = TRUE
+)
+
+FindTopicsNumber_plot(result)
+
+```
+
+
+# Running STM Models on the Tweets.
+
+```{r}
+
+climate_unique$text <- iconv(climate_unique$text, to = "ASCII", sub = " ")  # Convert to basic ASCII text to avoid silly characters
+climate_unique$text <- tolower(climate_unique$text)  # Make everything consistently lower case
+climate_unique$text <- gsub("rt", " ", climate_unique$text)  # Remove the "RT" (retweet) so duplicates are duplicates
+climate_unique$text <- gsub("@\\w+", " ", climate_unique$text)  # Remove user names (all proper names if you're wise!)
+climate_unique$text <- gsub("http.+ |http.+$", " ", climate_unique$text)  # Remove links
+climate_unique$text <- gsub("[[:punct:]]", " ", climate_unique$text)  # Remove punctuation
+climate_unique$text <- gsub("[ |\t]{2,}", " ", climate_unique$text)  # Remove tabs
+climate_unique$text <- gsub("amp", " ", climate_unique$text)  # "&" is "&amp" in HTML, so after punctuation removed ...
+climate_unique$text <- gsub("^ ", "", climate_unique$text)  # Leading blanks
+climate_unique$text <- gsub(" $", "", climate_unique$text)  # Lagging blanks
+climate_unique$text <- gsub(" +", " ", climate_unique$text) # General spaces (should just do all whitespaces no?)
+
+
+
+
+
+
+
+
+# Problem STM also removes some documents without telling you.
+
+
+processed <- textProcessor(climate_unique$text, metadata =climate_unique)
+
+
+
+
+out <- prepDocuments(processed$documents, processed$vocab, processed$meta, lower.thresh = 0)
+docs <- out$documents
+vocab <- out$vocab
+meta  <-out$meta
+
+out$docs.removed
+
+stm_model <- stm(out$documents, out$vocab, K = 6,    data = out$meta, seed = 8458159)
+
+
+plot(stm_model)
+
+z<-climate_unique[-processed$docs.removed,]
+
+
+```
+
+```{r}
+findThoughts(stm_model, texts = z$text,  n = 25, topics = 4)$docs[[1]]
+
+```
+
